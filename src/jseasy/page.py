@@ -246,12 +246,10 @@ class Page:
             return ""
 
         import_pattern = re.compile(
-            r"""^\s*import\s+(?P<clause>.+?)\s+from\s+['"](?P<specifier>[^'"]+)['"]\s*;?\s*$""",
-            re.MULTILINE,
+            r"""import\s+(?P<clause>.+?)\s+from\s+['"](?P<specifier>[^'"]+)['"]\s*;?""",
         )
         side_effect_pattern = re.compile(
-            r"""^\s*import\s+['"](?P<specifier>[^'"]+)['"]\s*;?\s*$""",
-            re.MULTILINE,
+            r"""import\s+['"](?P<specifier>[^'"]+)['"]\s*;?""",
         )
         code = import_pattern.sub(import_replacement, code)
 
@@ -302,6 +300,18 @@ class Page:
         code = re.sub(
             r"\bexport\s+(?P<kind>const|let|var|function|class)\s+(?P<name>[A-Za-z_$][\w$]*)",
             declaration_replacement,
+            code,
+        )
+
+        def default_declaration_replacement(match: re.Match[str]) -> str:
+            kind = match.group("kind")
+            name = match.group("name")
+            exports.append((name, "default"))
+            return f"{kind} {name}"
+
+        code = re.sub(
+            r"\bexport\s+default\s+(?P<kind>function|class)\s+(?P<name>[A-Za-z_$][\w$]*)",
+            default_declaration_replacement,
             code,
         )
 

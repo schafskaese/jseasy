@@ -369,3 +369,52 @@ def test_matches_closest_fragment_and_keyboard_event():
     )
 
     assert page.select("button.item").text == "true|root|Enter"
+
+
+def test_common_selectors_layout_match_media_formdata_shadow_and_document_write():
+    page = Page.from_html(
+        """
+        <ul><li>a</li><li>b</li></ul>
+        <form><input name="q" value="abc"></form>
+        <div id="box" style="width: 10px; height: 5px"></div>
+        <div id="host"></div>
+        <script>
+          document.write("<div id=written>ok</div>");
+          const root = document.querySelector("#host").attachShadow({ mode: "open" });
+          root.innerHTML = "<span>shadow</span>";
+        </script>
+        """,
+        width=1200,
+    )
+
+    assert page.eval("() => document.querySelectorAll('ul > li').length") == 2
+    assert page.eval("() => document.querySelector('li:nth-child(2)').textContent") == "b"
+    assert page.eval("() => document.querySelector('#box').getBoundingClientRect().width") == 10
+    assert page.eval("() => matchMedia('(min-width: 1000px)').matches") is True
+    assert page.eval("() => new FormData(document.querySelector('form')).get('q')") == "abc"
+    assert page.eval("() => document.querySelector('#host').shadowRoot.querySelector('span').textContent") == "shadow"
+    assert page.select("#written").text == "ok"
+
+
+def test_module_default_and_namespace_import():
+    def handler(request):
+        if request.url.path == "/app.js":
+            return httpx.Response(
+                200,
+                text="""
+                import value, * as ns from "./dep.js";
+                document.querySelector("#out").textContent = value + ":" + ns.named;
+                """,
+            )
+        return httpx.Response(200, text="export const named = 'N'; export default 'D';")
+
+    import httpx
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    page = Page.from_html(
+        '<div id="out"></div><script type="module" src="/app.js"></script>',
+        url="https://example.test",
+        client=client,
+    )
+
+    assert page.select("#out").text == "D:N"

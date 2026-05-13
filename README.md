@@ -145,14 +145,16 @@ jsEasy implements a pragmatic subset of browser APIs:
 | Area | Supported |
 | --- | --- |
 | DOM | `Document`, `Element`, `Node`, `Text`, `DocumentFragment` |
-| Selection | `querySelector`, `querySelectorAll`, `matches`, `closest` |
+| Selection | `querySelector`, `querySelectorAll`, `matches`, `closest`, descendant selectors, `>`, basic `:nth-child()` |
 | Mutation | `appendChild`, `removeChild`, `insertBefore`, `innerHTML`, `textContent`, basic `MutationObserver` |
 | Events | `Event`, `CustomEvent`, `MouseEvent`, `KeyboardEvent`, `addEventListener`, `dispatchEvent` |
-| Runtime | `setTimeout`, `setInterval`, `requestAnimationFrame`, Promise draining, `performance.now` |
+| Runtime | `setTimeout`, `setInterval`, `requestAnimationFrame`, Promise draining, `performance.now`, `matchMedia` |
 | Network | `fetch`, `XMLHttpRequest`, `Request`, `Response`, `Headers`, `navigator.sendBeacon` |
 | State | `localStorage`, `sessionStorage`, `document.cookie`, `history`, `location` |
 | CSSOM | `document.styleSheets`, `CSSStyleSheet`, `CSSStyleRule`, `CSSStyleDeclaration`, `getComputedStyle` |
-| Modules | classic scripts, `type="module"`, simple static local imports |
+| Forms/Layout shims | `FormData`, `getBoundingClientRect()`, `offsetWidth`, `offsetHeight` |
+| Shadow DOM | basic `attachShadow()` and `shadowRoot` |
+| Modules | classic scripts, `type="module"`, simple static local imports, default imports, namespace imports |
 | Utilities | `atob`, `btoa`, `console` |
 
 See [docs/api.md](docs/api.md) for details.

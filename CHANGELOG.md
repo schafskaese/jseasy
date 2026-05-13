@@ -4,6 +4,23 @@ All notable changes to jsEasy will be documented in this file.
 
 The format is based on Keep a Changelog, and this project follows semantic versioning after `1.0`.
 
+## 0.1.1 - 2026-05-13
+
+### Added
+
+- Basic `matchMedia()` support for width/height media queries.
+- Layout metric shims: `getBoundingClientRect()`, `offsetWidth`, `offsetHeight`, `clientWidth`, and `clientHeight`.
+- Basic `FormData` support for common form extraction.
+- Basic `document.write()` support.
+- Basic Shadow DOM support through `attachShadow()` and `shadowRoot`.
+- Selector support for child combinator `>` and simple `:nth-child(n)`.
+- Module support for default imports and namespace imports.
+
+### Fixed
+
+- Unquoted HTML attributes in `innerHTML` / fragment parsing.
+- Module imports that share a line with following JavaScript.
+
 ## 0.1.0 - 2026-05-13
 
 ### Added

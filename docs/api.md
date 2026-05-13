@@ -201,6 +201,7 @@ page.resource_errors: list[str]
 - `document.createElement()`
 - `document.createTextNode()`
 - `document.createDocumentFragment()`
+- `document.write()`
 - `document.documentElement`
 - `document.body`
 - `document.head`
@@ -211,6 +212,8 @@ page.resource_errors: list[str]
 - `querySelectorAll()`
 - `matches()`
 - `closest()`
+- child combinator selectors with `>`
+- basic `:nth-child(n)`
 
 ### DOM Mutation
 
@@ -231,6 +234,12 @@ page.resource_errors: list[str]
 - `classList.contains()`
 - `classList.add()`
 - `classList.remove()`
+- `getBoundingClientRect()`
+- `offsetWidth`
+- `offsetHeight`
+- `clientWidth`
+- `clientHeight`
+- basic `attachShadow()`
 
 ### Events
 
@@ -267,6 +276,7 @@ page.resource_errors: list[str]
 - `cancelAnimationFrame()`
 - Promise job draining
 - `performance.now()`
+- `matchMedia()`
 - `atob()`
 - `btoa()`
 - `console`
@@ -280,6 +290,7 @@ page.resource_errors: list[str]
 - `localStorage`
 - `sessionStorage`
 - `document.cookie`
+- `FormData`
 
 ### CSSOM
 
@@ -301,6 +312,8 @@ Supported:
 - external `<script type="module" src="...">`
 - simple static local imports
 - named exports
+- default imports
+- namespace imports
 - default exports in simple expression form
 
 Not supported:

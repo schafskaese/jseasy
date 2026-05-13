@@ -192,6 +192,7 @@ const __jseasy = (() => {
       this.localName = String(tagName).toLowerCase();
       this.attributes = {};
       this.style = new CSSStyleDeclaration(this);
+      this.shadowRoot = null;
     }
 
     get id() {
@@ -208,6 +209,22 @@ const __jseasy = (() => {
 
     set className(value) {
       this.setAttribute("class", value);
+    }
+
+    get name() {
+      return this.getAttribute("name") || "";
+    }
+
+    set name(value) {
+      this.setAttribute("name", value);
+    }
+
+    get value() {
+      return this.getAttribute("value") || "";
+    }
+
+    set value(value) {
+      this.setAttribute("value", value);
     }
 
     get classList() {
@@ -279,6 +296,33 @@ const __jseasy = (() => {
       return null;
     }
 
+    attachShadow(_init = {}) {
+      this.shadowRoot = new ShadowRoot(this);
+      return this.shadowRoot;
+    }
+
+    getBoundingClientRect() {
+      const width = parseCssPixel(this.style.getPropertyValue("width")) || 0;
+      const height = parseCssPixel(this.style.getPropertyValue("height")) || 0;
+      return { x: 0, y: 0, top: 0, left: 0, right: width, bottom: height, width, height };
+    }
+
+    get offsetWidth() {
+      return this.getBoundingClientRect().width;
+    }
+
+    get offsetHeight() {
+      return this.getBoundingClientRect().height;
+    }
+
+    get clientWidth() {
+      return this.offsetWidth;
+    }
+
+    get clientHeight() {
+      return this.offsetHeight;
+    }
+
     get children() {
       return this.childNodes.filter((node) => node.nodeType === 1);
     }
@@ -337,6 +381,12 @@ const __jseasy = (() => {
       return new DocumentFragment();
     }
 
+    write(html) {
+      const nodes = parseFragment(String(html));
+      const target = this.body || this;
+      nodes.forEach((node) => target.appendChild(node));
+    }
+
     get documentElement() {
       return this.childNodes.find((node) => node.nodeType === 1 && node.localName === "html")
         || this.childNodes.find((node) => node.nodeType === 1)
@@ -378,12 +428,80 @@ const __jseasy = (() => {
       super(11);
     }
 
+    get innerHTML() {
+      return this.childNodes.map(serialize).join("");
+    }
+
+    set innerHTML(html) {
+      this.childNodes = parseFragment(String(html));
+      this.childNodes.forEach((child) => {
+        child.parentNode = this;
+      });
+    }
+
     querySelector(selector) {
       return querySelectorAll(this, selector)[0] || null;
     }
 
     querySelectorAll(selector) {
       return querySelectorAll(this, selector);
+    }
+  }
+
+  class ShadowRoot extends DocumentFragment {
+    constructor(host) {
+      super();
+      this.host = host;
+      this.mode = "open";
+    }
+  }
+
+  class FormData {
+    constructor(form = null) {
+      this.__entries = [];
+      if (form) {
+        for (const node of walk(form)) {
+          if (node.nodeType === 1 && node.name) this.append(node.name, node.value);
+        }
+      }
+    }
+
+    append(name, value) {
+      this.__entries.push([String(name), String(value)]);
+    }
+
+    get(name) {
+      name = String(name);
+      const found = this.__entries.find(([key]) => key === name);
+      return found ? found[1] : null;
+    }
+
+    getAll(name) {
+      name = String(name);
+      return this.__entries.filter(([key]) => key === name).map(([, value]) => value);
+    }
+
+    has(name) {
+      name = String(name);
+      return this.__entries.some(([key]) => key === name);
+    }
+
+    delete(name) {
+      name = String(name);
+      this.__entries = this.__entries.filter(([key]) => key !== name);
+    }
+
+    set(name, value) {
+      this.delete(name);
+      this.append(name, value);
+    }
+
+    entries() {
+      return this.__entries[Symbol.iterator]();
+    }
+
+    [Symbol.iterator]() {
+      return this.entries();
     }
   }
 
@@ -554,6 +672,18 @@ const __jseasy = (() => {
     return false;
   }
 
+  function evaluateMediaQuery(query, environment) {
+    const minWidth = query.match(/\(\s*min-width\s*:\s*(\d+)px\s*\)/);
+    if (minWidth && environment.width < Number(minWidth[1])) return false;
+    const maxWidth = query.match(/\(\s*max-width\s*:\s*(\d+)px\s*\)/);
+    if (maxWidth && environment.width > Number(maxWidth[1])) return false;
+    const minHeight = query.match(/\(\s*min-height\s*:\s*(\d+)px\s*\)/);
+    if (minHeight && environment.height < Number(minHeight[1])) return false;
+    const maxHeight = query.match(/\(\s*max-height\s*:\s*(\d+)px\s*\)/);
+    if (maxHeight && environment.height > Number(maxHeight[1])) return false;
+    return true;
+  }
+
   function walk(root) {
     const out = [];
     function visit(node) {
@@ -576,6 +706,11 @@ const __jseasy = (() => {
       if (key) values[key] = value;
     }
     return values;
+  }
+
+  function parseCssPixel(value) {
+    const match = String(value || "").trim().match(/^(-?\d+(?:\.\d+)?)px$/);
+    return match ? Number(match[1]) : 0;
   }
 
   function parseCssRules(css) {
@@ -612,6 +747,14 @@ const __jseasy = (() => {
 
   function matchesSimple(node, selector) {
     if (!node || node.nodeType !== 1) return false;
+    const nth = selector.match(/^(.*):nth-child\((\d+)\)$/);
+    if (nth) {
+      const base = nth[1] || "*";
+      const siblings = node.parentNode ? node.parentNode.childNodes.filter((child) => child.nodeType === 1) : [];
+      if (siblings.indexOf(node) !== Number(nth[2]) - 1) return false;
+      selector = base;
+    }
+    if (selector === "*") return true;
     if (selector.startsWith("#")) return node.id === selector.slice(1);
     if (selector.startsWith(".")) return node.classList.contains(selector.slice(1));
     const attr = selector.match(/^\[([^=\]]+)(?:=["']?([^"'\]]+)["']?)?\]$/);
@@ -625,10 +768,19 @@ const __jseasy = (() => {
   }
 
   function querySelectorAll(root, selector) {
-    const parts = String(selector).trim().split(/\s+/).filter(Boolean);
+    const parts = String(selector).trim().replace(/\s*>\s*/g, " > ").split(/\s+/).filter(Boolean);
     if (parts.length === 0) return [];
     let candidates = walk(root).filter((node) => matchesSimple(node, parts[0]));
-    for (const part of parts.slice(1)) {
+    for (let index = 1; index < parts.length; index += 1) {
+      const part = parts[index];
+      if (part === ">") {
+        const childSelector = parts[index + 1];
+        candidates = candidates.flatMap((candidate) =>
+          candidate.children.filter((node) => matchesSimple(node, childSelector))
+        );
+        index += 1;
+        continue;
+      }
       const next = [];
       for (const candidate of candidates) {
         next.push(...walk(candidate).filter((node) => matchesSimple(node, part)));
@@ -660,8 +812,8 @@ const __jseasy = (() => {
         const open = token.match(/^<\s*([a-zA-Z0-9-]+)([^>]*)>/);
         if (!open) continue;
         const element = new Element(open[1]);
-        const attrs = open[2].matchAll(/([^\s=]+)(?:=["']([^"']*)["'])?/g);
-        for (const attr of attrs) element.setAttribute(attr[1], attr[2] || "");
+        const attrs = open[2].matchAll(/([^\s=]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\s"'>/]+)))?/g);
+        for (const attr of attrs) element.setAttribute(attr[1], attr[2] || attr[3] || attr[4] || "");
         stack[stack.length - 1].appendChild(element);
         if (!token.endsWith("/>")) stack.push(element);
       } else {
@@ -696,6 +848,8 @@ const __jseasy = (() => {
     globalThis.Document = Document;
     globalThis.Text = Text;
     globalThis.DocumentFragment = DocumentFragment;
+    globalThis.ShadowRoot = ShadowRoot;
+    globalThis.FormData = FormData;
     globalThis.Storage = Storage;
     globalThis.Headers = Headers;
     globalThis.Request = Request;
@@ -762,6 +916,16 @@ const __jseasy = (() => {
       availWidth: environment.width,
       availHeight: environment.height,
     };
+    globalThis.matchMedia = (query) => ({
+      media: String(query),
+      matches: evaluateMediaQuery(String(query), environment),
+      onchange: null,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+      dispatchEvent: () => true,
+    });
     globalThis.performance = {
       now: () => Date.now(),
       timeOrigin: Date.now(),
