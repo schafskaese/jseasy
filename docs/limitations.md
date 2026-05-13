@@ -28,9 +28,13 @@ Selectors are intentionally small. Basic tags, classes, IDs, simple attributes, 
 
 `Request`, `Response`, and `Headers` cover common fetch workflows. Streams and binary body handling are not implemented.
 
+`Blob` support is text-backed and intended for form-style scraper workflows. Binary blobs, streams, and typed-array fidelity are not implemented.
+
+`document.cookie` is a pragmatic in-memory cookie jar. It supports common `name=value` reads and writes for scripts and forwards those values to JS-initiated requests, but it does not implement full domain, path, expiry, `SameSite`, or secure cookie semantics.
+
 `WebSocket` is currently a compatibility stub. It exposes constants and fails clearly when constructed.
 
-Layout support is only a shim. `getBoundingClientRect()` and offset/client dimensions derive from explicit pixel width/height styles and do not perform real layout.
+Layout support is only a shim. `getBoundingClientRect()` and offset/client dimensions derive from simple computed pixel width/height styles and do not perform real layout.
 
 Shadow DOM support is basic and intended for simple scripts that expect `attachShadow()` and `shadowRoot`; slotting, style scoping, and custom elements are not implemented.
 

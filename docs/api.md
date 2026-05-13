@@ -70,6 +70,20 @@ with Page.open("https://example.com") as page:
 
 `Page.open()` uses `httpx.Client` internally. If you pass your own client, jsEasy will not close it.
 
+### `page.goto()`
+
+```python
+page.goto(url: str, *, run_scripts: bool = True) -> None
+```
+
+Fetch a new URL into an existing page runtime. This replaces the document while reusing the page's configured client, viewport, diagnostics, and browser-like storage objects.
+
+```python
+page = Page.from_html("<main>start</main>")
+page.goto("https://example.com")
+print(page.select("h1").text)
+```
+
 ### `Page.aopen()`
 
 ```python
@@ -215,6 +229,8 @@ page.resource_errors: list[str]
 - child combinator selectors with `>`
 - basic `:nth-child(n)`
 
+For HTML fragments without explicit `<html>`, `<head>`, or `<body>` tags, jsEasy exposes browser-like `document.head` and `document.body` fallbacks so common scripts can append to `document.body`.
+
 ### DOM Mutation
 
 - `appendChild()`
@@ -266,6 +282,8 @@ page.resource_errors: list[str]
 - `Headers`
 - `navigator.sendBeacon()`
 
+If JavaScript writes `document.cookie`, jsEasy forwards those cookies into subsequent Python-backed `fetch()` and `XMLHttpRequest` calls unless the request already sets a `Cookie` header.
+
 ### Runtime
 
 - `setTimeout()`
@@ -291,6 +309,8 @@ page.resource_errors: list[str]
 - `sessionStorage`
 - `document.cookie`
 - `FormData`
+- `URLSearchParams`
+- text-backed `Blob` and `Blob.slice()`
 
 ### CSSOM
 

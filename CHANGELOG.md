@@ -15,6 +15,11 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 - Basic Shadow DOM support through `attachShadow()` and `shadowRoot`.
 - Selector support for child combinator `>` and simple `:nth-child(n)`.
 - Module support for default imports and namespace imports.
+- `Page.goto()` for loading a new URL into an existing page.
+- `URLSearchParams` and text-backed `Blob` / `Blob.slice()` for common request body workflows.
+- Forwarding of JS-set `document.cookie` values into Python-backed `fetch()` and XHR calls.
+- Browser-like `document.head` / `document.body` fallback for fragment HTML.
+- Layout metric shims now consider simple stylesheet-derived pixel width and height values.
 
 ### Fixed
 

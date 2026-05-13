@@ -302,8 +302,9 @@ const __jseasy = (() => {
     }
 
     getBoundingClientRect() {
-      const width = parseCssPixel(this.style.getPropertyValue("width")) || 0;
-      const height = parseCssPixel(this.style.getPropertyValue("height")) || 0;
+      const style = computeStyle(this);
+      const width = parseCssPixel(style.getPropertyValue("width")) || 0;
+      const height = parseCssPixel(style.getPropertyValue("height")) || 0;
       return { x: 0, y: 0, top: 0, left: 0, right: width, bottom: height, width, height };
     }
 
@@ -366,7 +367,26 @@ const __jseasy = (() => {
       this.hidden = false;
       this.visibilityState = "visible";
       this.styleSheets = [];
-      this.cookie = "";
+      this.__cookies = {};
+    }
+
+    get cookie() {
+      return Object.entries(this.__cookies).map(([key, value]) => `${key}=${value}`).join("; ");
+    }
+
+    set cookie(value) {
+      const pair = String(value).split(";")[0];
+      const index = pair.indexOf("=");
+      if (index === -1) return;
+      const key = pair.slice(0, index).trim();
+      const cookieValue = pair.slice(index + 1).trim();
+      if (key) this.__cookies[key] = cookieValue;
+    }
+
+    __setCookieHeader(value) {
+      for (const part of String(value || "").split(";")) {
+        this.cookie = part.trim();
+      }
     }
 
     createElement(tagName) {
@@ -394,11 +414,11 @@ const __jseasy = (() => {
     }
 
     get body() {
-      return this.querySelector("body");
+      return this.__ensureBody();
     }
 
     get head() {
-      return this.querySelector("head");
+      return this.querySelector("head") || this.__ensureHead();
     }
 
     get scripts() {
@@ -420,6 +440,46 @@ const __jseasy = (() => {
 
     querySelectorAll(selector) {
       return querySelectorAll(this, selector);
+    }
+
+    __ensureHead() {
+      let html = this.documentElement;
+      if (!html || html.localName !== "html") {
+        html = this.__wrapInHtml();
+      }
+      let head = html.childNodes.find((node) => node.nodeType === 1 && node.localName === "head");
+      if (!head) {
+        head = new Element("head");
+        html.insertBefore(head, html.childNodes[0] || null);
+      }
+      return head;
+    }
+
+    __ensureBody() {
+      let body = this.querySelector("body");
+      if (body) return body;
+      let html = this.documentElement;
+      if (!html || html.localName !== "html") {
+        html = this.__wrapInHtml();
+      }
+      body = html.childNodes.find((node) => node.nodeType === 1 && node.localName === "body");
+      if (!body) {
+        body = new Element("body");
+        html.appendChild(body);
+      }
+      return body;
+    }
+
+    __wrapInHtml() {
+      const existing = [...this.childNodes];
+      this.childNodes = [];
+      existing.forEach((node) => { node.parentNode = null; });
+      const html = new Element("html");
+      const body = new Element("body");
+      this.appendChild(html);
+      html.appendChild(body);
+      existing.forEach((node) => body.appendChild(node));
+      return html;
     }
   }
 
@@ -505,6 +565,106 @@ const __jseasy = (() => {
     }
   }
 
+  class URLSearchParams {
+    constructor(init = "") {
+      this.__entries = [];
+      if (typeof init === "string") {
+        const source = init.startsWith("?") ? init.slice(1) : init;
+        for (const part of source.split("&")) {
+          if (!part) continue;
+          const [key, value = ""] = part.split("=");
+          this.append(decodeURIComponent(key.replaceAll("+", " ")), decodeURIComponent(value.replaceAll("+", " ")));
+        }
+      } else if (Array.isArray(init)) {
+        init.forEach(([key, value]) => this.append(key, value));
+      } else if (init instanceof URLSearchParams) {
+        init.forEach((value, key) => this.append(key, value));
+      } else {
+        Object.entries(init || {}).forEach(([key, value]) => this.append(key, value));
+      }
+    }
+
+    append(name, value) {
+      this.__entries.push([String(name), String(value)]);
+    }
+
+    set(name, value) {
+      this.delete(name);
+      this.append(name, value);
+    }
+
+    get(name) {
+      name = String(name);
+      const found = this.__entries.find(([key]) => key === name);
+      return found ? found[1] : null;
+    }
+
+    getAll(name) {
+      name = String(name);
+      return this.__entries.filter(([key]) => key === name).map(([, value]) => value);
+    }
+
+    has(name) {
+      name = String(name);
+      return this.__entries.some(([key]) => key === name);
+    }
+
+    delete(name) {
+      name = String(name);
+      this.__entries = this.__entries.filter(([key]) => key !== name);
+    }
+
+    forEach(callback) {
+      for (const [key, value] of this.__entries) callback(value, key, this);
+    }
+
+    entries() {
+      return this.__entries[Symbol.iterator]();
+    }
+
+    keys() {
+      return this.__entries.map(([key]) => key)[Symbol.iterator]();
+    }
+
+    values() {
+      return this.__entries.map(([, value]) => value)[Symbol.iterator]();
+    }
+
+    sort() {
+      this.__entries.sort(([left], [right]) => left.localeCompare(right));
+    }
+
+    [Symbol.iterator]() {
+      return this.entries();
+    }
+
+    toString() {
+      return this.__entries
+        .map(([key, value]) => `${formEncode(key)}=${formEncode(value)}`)
+        .join("&");
+    }
+  }
+
+  function formEncode(value) {
+    return encodeURIComponent(String(value)).replaceAll("%20", "+");
+  }
+
+  class Blob {
+    constructor(parts = [], options = {}) {
+      this.type = options.type || "";
+      this.__text = parts.map((part) => part instanceof Blob ? part.__text : String(part)).join("");
+      this.size = this.__text.length;
+    }
+
+    text() {
+      return Promise.resolve(this.__text);
+    }
+
+    slice(start = 0, end = this.size, type = "") {
+      return new Blob([this.__text.slice(start, end)], { type });
+    }
+  }
+
   class Storage {
     constructor() {
       this.__items = {};
@@ -585,7 +745,7 @@ const __jseasy = (() => {
       this.headers = new Headers(init.headers || {});
       this.url = init.url || "";
       this.ok = this.status >= 200 && this.status < 300;
-      this.__body = String(body ?? "");
+      this.__body = body instanceof Blob ? body.__text : String(body ?? "");
     }
 
     text() {
@@ -621,8 +781,18 @@ const __jseasy = (() => {
       }
       if (init.method) this.method = String(init.method).toUpperCase();
       if (init.headers) this.headers = new Headers(init.headers);
-      if (init.body != null) this.body = String(init.body);
+      if (init.body != null) this.body = bodyToString(init.body);
     }
+  }
+
+  function bodyToString(body) {
+    if (body == null) return null;
+    if (body instanceof URLSearchParams) return body.toString();
+    if (body instanceof FormData) {
+      return Array.from(body.entries()).map(([key, value]) => `${formEncode(key)}=${formEncode(value)}`).join("&");
+    }
+    if (body instanceof Blob) return body.__text;
+    return String(body);
   }
 
   class MutationObserver {
@@ -850,6 +1020,8 @@ const __jseasy = (() => {
     globalThis.DocumentFragment = DocumentFragment;
     globalThis.ShadowRoot = ShadowRoot;
     globalThis.FormData = FormData;
+    globalThis.URLSearchParams = URLSearchParams;
+    globalThis.Blob = Blob;
     globalThis.Storage = Storage;
     globalThis.Headers = Headers;
     globalThis.Request = Request;
@@ -859,6 +1031,7 @@ const __jseasy = (() => {
     globalThis.CSSRule = CSSRule;
     globalThis.CSSStyleRule = CSSStyleRule;
     globalThis.CSSStyleSheet = CSSStyleSheet;
+    document.__setCookieHeader(environment.cookie || "");
     globalThis.navigator = {
       userAgent: environment.userAgent,
       webdriver: false,
@@ -1009,11 +1182,12 @@ const __jseasy = (() => {
     globalThis.getComputedStyle = (element) => computeStyle(element);
     globalThis.fetch = (input, options = {}) => {
       const request = input instanceof Request ? new Request(input, options) : new Request(input, options);
+      if (document.cookie && !request.headers.has("cookie")) request.headers.set("cookie", document.cookie);
       const raw = __py_fetch(
         request.url,
         JSON.stringify({
           method: request.method,
-          body: request.body == null ? null : String(request.body),
+          body: request.body == null ? null : bodyToString(request.body),
           headers: Object.fromEntries(request.headers.entries()),
         })
       );
@@ -1071,9 +1245,12 @@ const __jseasy = (() => {
       send(body = null) {
         const run = () => {
           try {
+            if (document.cookie && !Object.keys(this.__headers).some((key) => key.toLowerCase() === "cookie")) {
+              this.__headers.Cookie = document.cookie;
+            }
             const raw = __py_fetch(this.__url, JSON.stringify({
               method: this.__method,
-              body: body == null ? null : String(body),
+              body: body == null ? null : bodyToString(body),
               headers: this.__headers,
             }));
             const payload = JSON.parse(raw);

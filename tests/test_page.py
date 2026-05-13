@@ -418,3 +418,69 @@ def test_module_default_and_namespace_import():
     )
 
     assert page.select("#out").text == "D:N"
+
+
+def test_url_search_params_blob_cookie_fetch_and_goto():
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.path, request.headers.get("cookie"), request.content))
+        if request.url.path == "/first":
+            return httpx.Response(200, html="<h1>First</h1>")
+        if request.url.path == "/second":
+            return httpx.Response(200, html="<h1>Second</h1>")
+        return httpx.Response(200, json={"ok": True})
+
+    import httpx
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    page = Page.open("https://example.test/first", client=client)
+    assert page.select("h1").text == "First"
+    page.goto("https://example.test/second")
+    assert page.select("h1").text == "Second"
+
+    page.load_html(
+        """
+        <div id="result"></div>
+        <script>
+          document.cookie = "sid=abc";
+          const params = new URLSearchParams({ q: "hello world" });
+          params.append("page", "1");
+          fetch("/api", { method: "POST", body: new Blob([params.toString()]) })
+            .then(r => r.json())
+            .then(data => {
+              document.querySelector("#result").textContent = data.ok + ":" + params.get("q");
+            });
+        </script>
+        """,
+    )
+
+    assert page.select("#result").text == "true:hello world"
+    assert seen[-1] == ("/api", "sid=abc", b"q=hello+world&page=1")
+
+
+def test_fragment_pages_have_browser_like_body_for_scripts():
+    page = Page.from_html(
+        """
+        <main id="app"></main>
+        <script>
+          const node = document.createElement("p");
+          node.textContent = document.body.localName + ":" + document.head.localName;
+          document.body.appendChild(node);
+        </script>
+        """
+    )
+
+    assert page.select("p").text == "body:head"
+
+
+def test_layout_shim_uses_simple_stylesheet_dimensions():
+    page = Page.from_html(
+        """
+        <style>.box { width: 42px; height: 9px; }</style>
+        <div class="box"></div>
+        """
+    )
+
+    assert page.eval("() => document.querySelector('.box').getBoundingClientRect().width") == 42
+    assert page.eval("() => document.querySelector('.box').offsetHeight") == 9

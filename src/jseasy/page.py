@@ -114,11 +114,7 @@ class Page:
     @classmethod
     def open(cls, url: str, *, run_scripts: bool = True, **kwargs: Any) -> Page:
         page = cls(url=url, **kwargs)
-        response = page._client.get(url, headers={"user-agent": page.user_agent})
-        response.raise_for_status()
-        page.url = str(response.url)
-        page.load_html(response.text, run_scripts=run_scripts)
-        page.wait_idle()
+        page.goto(url, run_scripts=run_scripts)
         return page
 
     @classmethod
@@ -154,6 +150,13 @@ class Page:
         )
         self._drain_jobs()
         self._ctx.eval('document.readyState = "complete";')
+
+    def goto(self, url: str, *, run_scripts: bool = True) -> None:
+        response = self._client.get(url, headers={"user-agent": self.user_agent})
+        response.raise_for_status()
+        self.url = str(response.url)
+        self.load_html(response.text, run_scripts=run_scripts)
+        self.wait_idle()
 
     def eval(self, source: str, *args: Any) -> Any:
         self._ctx.set("__jseasy_args_json", json.dumps(list(args)))
@@ -427,7 +430,14 @@ class Page:
             "height": self.height,
             "devicePixelRatio": 1,
             "userAgent": self.user_agent,
+            "cookie": self._cookie_header(),
         }
+
+    def _cookie_header(self) -> str:
+        try:
+            return "; ".join(f"{cookie.name}={cookie.value}" for cookie in self._client.cookies.jar)
+        except Exception:
+            return ""
 
     def _drain_jobs(self) -> None:
         execute_pending_job = getattr(self._ctx, "execute_pending_job", None)
