@@ -12,7 +12,6 @@ jsEasy is a lightweight Python runtime for executing JavaScript against a small 
 ## Project Notes
 
 - [Limitations And Compatibility](limitations.md)
-- [iv8 Comparison](iv8-comparison.md)
 - [Release Checklist](release.md)
 
 ## Core Concepts

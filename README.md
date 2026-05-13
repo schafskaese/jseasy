@@ -196,7 +196,6 @@ See [examples/](examples):
 - [Limitations](docs/limitations.md)
 - [Recipes](docs/recipes.md)
 - [Troubleshooting](docs/troubleshooting.md)
-- [iv8 Comparison](docs/iv8-comparison.md)
 - [Release Checklist](docs/release.md)
 
 ## Development
