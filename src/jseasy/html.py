@@ -23,6 +23,16 @@ VOID_ELEMENTS = {
 }
 
 
+JAVASCRIPT_MIME_TYPES = {
+    "",
+    "module",
+    "text/javascript",
+    "application/javascript",
+    "text/ecmascript",
+    "application/ecmascript",
+}
+
+
 @dataclass(frozen=True)
 class Script:
     src: str | None
@@ -33,10 +43,14 @@ class Script:
     def is_module(self) -> bool:
         return self.type.lower() == "module"
 
+    @property
+    def is_javascript(self) -> bool:
+        return self.type.strip().lower() in JAVASCRIPT_MIME_TYPES
+
 
 class TreeBuilder(HTMLParser):
     def __init__(self) -> None:
-        super().__init__(convert_charrefs=False)
+        super().__init__(convert_charrefs=True)
         self.root: dict[str, Any] = {
             "type": "document",
             "childNodes": [],
@@ -66,6 +80,8 @@ class TreeBuilder(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
+        if not any(node.get("tagName") == tag for node in self.stack[1:]):
+            return
         while len(self.stack) > 1:
             node = self.stack.pop()
             if node.get("tagName") == tag:
@@ -87,12 +103,6 @@ class TreeBuilder(HTMLParser):
     def handle_data(self, data: str) -> None:
         if data:
             self.stack[-1]["childNodes"].append({"type": "text", "data": data})
-
-    def handle_entityref(self, name: str) -> None:
-        self.handle_data(f"&{name};")
-
-    def handle_charref(self, name: str) -> None:
-        self.handle_data(f"&#{name};")
 
 
 def parse_html(html: str) -> tuple[dict[str, Any], list[Script]]:

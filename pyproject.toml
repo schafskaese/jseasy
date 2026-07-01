@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jseasy"
-version = "0.1.1"
+version = "0.1.2"
 description = "jsEasy (jseasy): a lightweight Python scraping runtime that executes JavaScript against a small DOM without launching a browser."
 readme = "README.md"
 requires-python = ">=3.10"

@@ -148,7 +148,7 @@ class Page:
             window.dispatchEvent(new Event("load"));
             """
         )
-        self._drain_jobs()
+        self.wait_idle()
         self._ctx.eval('document.readyState = "complete";')
 
     def goto(self, url: str, *, run_scripts: bool = True) -> None:
@@ -193,9 +193,17 @@ class Page:
 
     def _run_scripts(self, scripts: list[Script]) -> None:
         for script in scripts:
+            if not script.is_javascript:
+                continue
             code = script.code
             if script.src:
-                code = self._load_script(script.src)
+                try:
+                    code = self._load_script(script.src)
+                except Exception as exc:
+                    self.script_errors.append(f"{urljoin(self.url, script.src)}: {exc}")
+                    if self.raise_script_errors:
+                        raise
+                    continue
             if not code.strip():
                 continue
             try:
@@ -393,15 +401,18 @@ class Page:
     def _fetch(self, raw_url: str, raw_options: str) -> str:
         options = json.loads(raw_options)
         url = urljoin(self.url, raw_url)
-        response = self._client.request(
-            options.get("method", "GET"),
-            url,
-            content=options.get("body"),
-            headers={
-                "user-agent": self.user_agent,
-                **dict(options.get("headers") or {}),
-            },
-        )
+        try:
+            response = self._client.request(
+                options.get("method", "GET"),
+                url,
+                content=options.get("body"),
+                headers={
+                    "user-agent": self.user_agent,
+                    **dict(options.get("headers") or {}),
+                },
+            )
+        except Exception as exc:
+            return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
         return json.dumps(
             {
                 "status": response.status_code,

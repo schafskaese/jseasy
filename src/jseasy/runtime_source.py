@@ -1,8 +1,18 @@
 RUNTIME_SOURCE = r"""
 const __jseasy = (() => {
   let nodeId = 1;
-  const timers = [];
+  let timerSeq = 1;
+  const timers = new Map();
   const mutationObservers = [];
+  const cookieJar = {};
+  const persistentStorage = { local: null, session: null };
+
+  const VOID_ELEMENTS = new Set([
+    "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "param", "source", "track", "wbr",
+  ]);
+
+  const RAW_TEXT_ELEMENTS = new Set(["script", "style"]);
 
   function escapeHtml(value) {
     return String(value)
@@ -13,6 +23,18 @@ const __jseasy = (() => {
 
   function escapeAttr(value) {
     return escapeHtml(value).replaceAll('"', "&quot;");
+  }
+
+  function decodeEntities(value) {
+    return String(value)
+      .replace(/&#x([0-9a-fA-F]+);/g, (_match, hex) => String.fromCodePoint(parseInt(hex, 16)))
+      .replace(/&#(\d+);/g, (_match, dec) => String.fromCodePoint(Number(dec)))
+      .replaceAll("&lt;", "<")
+      .replaceAll("&gt;", ">")
+      .replaceAll("&quot;", '"')
+      .replaceAll("&apos;", "'")
+      .replaceAll("&nbsp;", "\u00a0")
+      .replaceAll("&amp;", "&");
   }
 
   class Node {
@@ -284,7 +306,7 @@ const __jseasy = (() => {
     }
 
     matches(selector) {
-      return matchesSimple(this, selector);
+      return elementMatchesSelector(this, selector);
     }
 
     closest(selector) {
@@ -367,7 +389,7 @@ const __jseasy = (() => {
       this.hidden = false;
       this.visibilityState = "visible";
       this.styleSheets = [];
-      this.__cookies = {};
+      this.__cookies = cookieJar;
     }
 
     get cookie() {
@@ -938,43 +960,60 @@ const __jseasy = (() => {
   }
 
   function querySelectorAll(root, selector) {
-    const parts = String(selector).trim().replace(/\s*>\s*/g, " > ").split(/\s+/).filter(Boolean);
-    if (parts.length === 0) return [];
-    let candidates = walk(root).filter((node) => matchesSimple(node, parts[0]));
-    for (let index = 1; index < parts.length; index += 1) {
-      const part = parts[index];
-      if (part === ">") {
-        const childSelector = parts[index + 1];
-        candidates = candidates.flatMap((candidate) =>
-          candidate.children.filter((node) => matchesSimple(node, childSelector))
-        );
-        index += 1;
-        continue;
+    const all = walk(root);
+    const matched = new Set();
+    for (const single of String(selector).split(",")) {
+      const parts = single.trim().replace(/\s*>\s*/g, " > ").split(/\s+/).filter(Boolean);
+      if (parts.length === 0) continue;
+      let candidates = all.filter((node) => matchesSimple(node, parts[0]));
+      for (let index = 1; index < parts.length; index += 1) {
+        const part = parts[index];
+        if (part === ">") {
+          const childSelector = parts[index + 1];
+          candidates = candidates.flatMap((candidate) =>
+            candidate.children.filter((node) => matchesSimple(node, childSelector))
+          );
+          index += 1;
+          continue;
+        }
+        const next = new Set();
+        for (const candidate of candidates) {
+          for (const node of walk(candidate)) {
+            if (matchesSimple(node, part)) next.add(node);
+          }
+        }
+        candidates = [...next];
       }
-      const next = [];
-      for (const candidate of candidates) {
-        next.push(...walk(candidate).filter((node) => matchesSimple(node, part)));
-      }
-      candidates = next;
+      candidates.forEach((node) => matched.add(node));
     }
-    return candidates;
+    return all.filter((node) => matched.has(node));
   }
 
   function serialize(node) {
     if (node.nodeType === 3) return node.outerHTML;
-    if (node.nodeType === 9) return node.childNodes.map(serialize).join("");
+    if (node.nodeType === 9 || node.nodeType === 11) return node.childNodes.map(serialize).join("");
     const attrs = Object.entries(node.attributes)
       .map(([key, value]) => ` ${key}="${escapeAttr(value)}"`)
       .join("");
+    if (VOID_ELEMENTS.has(node.localName)) return `<${node.localName}${attrs}>`;
+    if (RAW_TEXT_ELEMENTS.has(node.localName)) {
+      return `<${node.localName}${attrs}>${node.textContent}</${node.localName}>`;
+    }
     return `<${node.localName}${attrs}>${node.childNodes.map(serialize).join("")}</${node.localName}>`;
   }
 
   function parseFragment(html) {
     const root = new Element("jseasy-fragment");
     const stack = [root];
-    const tokens = String(html).match(/<[^>]+>|[^<]+/g) || [];
+    const tokens = String(html).match(/<!--[\s\S]*?-->|<[^>]+>|[^<]+/g) || [];
     for (const token of tokens) {
+      if (token.startsWith("<!--")) continue;
       if (token.startsWith("</")) {
+        const close = token.match(/^<\/\s*([a-zA-Z0-9-]+)/);
+        if (!close) continue;
+        const target = close[1].toLowerCase();
+        if (!stack.some((node, index) => index > 0 && node.localName === target)) continue;
+        while (stack.length > 1 && stack[stack.length - 1].localName !== target) stack.pop();
         if (stack.length > 1) stack.pop();
         continue;
       }
@@ -982,12 +1021,16 @@ const __jseasy = (() => {
         const open = token.match(/^<\s*([a-zA-Z0-9-]+)([^>]*)>/);
         if (!open) continue;
         const element = new Element(open[1]);
-        const attrs = open[2].matchAll(/([^\s=]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\s"'>/]+)))?/g);
-        for (const attr of attrs) element.setAttribute(attr[1], attr[2] || attr[3] || attr[4] || "");
+        let rawAttrs = open[2];
+        if (rawAttrs.endsWith("/")) rawAttrs = rawAttrs.slice(0, -1);
+        const attrs = rawAttrs.matchAll(/([^\s=/]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\s"'>/]+)))?/g);
+        for (const attr of attrs) {
+          element.setAttribute(attr[1], decodeEntities(attr[2] ?? attr[3] ?? attr[4] ?? ""));
+        }
         stack[stack.length - 1].appendChild(element);
-        if (!token.endsWith("/>")) stack.push(element);
+        if (!token.endsWith("/>") && !VOID_ELEMENTS.has(element.localName)) stack.push(element);
       } else {
-        stack[stack.length - 1].appendChild(new Text(token));
+        stack[stack.length - 1].appendChild(new Text(decodeEntities(token)));
       }
     }
     return root.childNodes;
@@ -1009,6 +1052,8 @@ const __jseasy = (() => {
   }
 
   function installGlobals(document, environment) {
+    timers.clear();
+    mutationObservers.length = 0;
     globalThis.document = document;
     globalThis.window = globalThis;
     globalThis.self = globalThis;
@@ -1041,8 +1086,8 @@ const __jseasy = (() => {
       onLine: true,
       sendBeacon: (url, data = null) => {
         try {
-          __py_fetch(String(url), JSON.stringify({ method: "POST", body: data == null ? null : String(data), headers: {} }));
-          return true;
+          const raw = __py_fetch(String(url), JSON.stringify({ method: "POST", body: data == null ? null : String(data), headers: {} }));
+          return !JSON.parse(raw).error;
         } catch (_error) {
           return false;
         }
@@ -1078,8 +1123,10 @@ const __jseasy = (() => {
       forward() {},
       go() {},
     };
-    globalThis.localStorage = new Storage();
-    globalThis.sessionStorage = new Storage();
+    persistentStorage.local ||= new Storage();
+    persistentStorage.session ||= new Storage();
+    globalThis.localStorage = persistentStorage.local;
+    globalThis.sessionStorage = persistentStorage.session;
     globalThis.innerWidth = environment.width;
     globalThis.innerHeight = environment.height;
     globalThis.devicePixelRatio = environment.devicePixelRatio;
@@ -1114,15 +1161,24 @@ const __jseasy = (() => {
       warn: (...args) => __py_console("warn", args.map(String).join(" ")),
       error: (...args) => __py_console("error", args.map(String).join(" ")),
     };
-    globalThis.setTimeout = (callback, delay = 0, ...args) => {
-      timers.push(() => callback(...args));
-      return timers.length;
+    globalThis.setTimeout = (callback, _delay = 0, ...args) => {
+      const id = timerSeq++;
+      timers.set(id, { fn: () => callback(...args), repeat: false });
+      return id;
     };
-    globalThis.clearTimeout = () => {};
-    globalThis.setInterval = globalThis.setTimeout;
-    globalThis.clearInterval = () => {};
+    globalThis.clearTimeout = (id) => {
+      timers.delete(id);
+    };
+    globalThis.setInterval = (callback, _delay = 0, ...args) => {
+      const id = timerSeq++;
+      timers.set(id, { fn: () => callback(...args), repeat: true });
+      return id;
+    };
+    globalThis.clearInterval = (id) => {
+      timers.delete(id);
+    };
     globalThis.requestAnimationFrame = (callback) => setTimeout(() => callback(Date.now()), 16);
-    globalThis.cancelAnimationFrame = () => {};
+    globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
     const windowTarget = new Node(0);
     globalThis.addEventListener = windowTarget.addEventListener.bind(windowTarget);
     globalThis.removeEventListener = windowTarget.removeEventListener.bind(windowTarget);
@@ -1181,22 +1237,29 @@ const __jseasy = (() => {
     globalThis.WebSocket.CLOSED = 3;
     globalThis.getComputedStyle = (element) => computeStyle(element);
     globalThis.fetch = (input, options = {}) => {
-      const request = input instanceof Request ? new Request(input, options) : new Request(input, options);
-      if (document.cookie && !request.headers.has("cookie")) request.headers.set("cookie", document.cookie);
-      const raw = __py_fetch(
-        request.url,
-        JSON.stringify({
-          method: request.method,
-          body: request.body == null ? null : bodyToString(request.body),
-          headers: Object.fromEntries(request.headers.entries()),
-        })
-      );
-      const payload = JSON.parse(raw);
-      return Promise.resolve(new Response(payload.text, {
-        status: payload.status,
-        headers: payload.headers,
-        url: payload.url,
-      }));
+      try {
+        const request = new Request(input, options);
+        if (document.cookie && !request.headers.has("cookie")) request.headers.set("cookie", document.cookie);
+        const raw = __py_fetch(
+          request.url,
+          JSON.stringify({
+            method: request.method,
+            body: request.body == null ? null : bodyToString(request.body),
+            headers: Object.fromEntries(request.headers.entries()),
+          })
+        );
+        const payload = JSON.parse(raw);
+        if (payload.error) {
+          return Promise.reject(new TypeError(`Failed to fetch: ${payload.error}`));
+        }
+        return Promise.resolve(new Response(payload.text, {
+          status: payload.status,
+          headers: payload.headers,
+          url: payload.url,
+        }));
+      } catch (error) {
+        return Promise.reject(error instanceof Error ? error : new TypeError(String(error)));
+      }
     };
     globalThis.XMLHttpRequest = class XMLHttpRequest extends Node {
       constructor() {
@@ -1254,6 +1317,7 @@ const __jseasy = (() => {
               headers: this.__headers,
             }));
             const payload = JSON.parse(raw);
+            if (payload.error) throw new Error(payload.error);
             this.status = payload.status;
             this.responseURL = payload.url;
             this.__responseHeaders = {};
@@ -1289,15 +1353,33 @@ const __jseasy = (() => {
   }
 
   function drainTimers() {
+    const cap = 1000;
     let count = 0;
-    while (timers.length && count < 1000) {
-      const timer = timers.shift();
+
+    const runTimer = (timer) => {
       try {
-        timer();
+        timer.fn();
       } catch (error) {
         console.error(error && error.stack ? error.stack : String(error));
       }
       count += 1;
+    };
+
+    const runOneShots = () => {
+      while (count < cap) {
+        const next = [...timers.entries()].find(([, timer]) => !timer.repeat);
+        if (!next) return;
+        timers.delete(next[0]);
+        runTimer(next[1]);
+      }
+    };
+
+    runOneShots();
+    for (const [id, timer] of [...timers.entries()]) {
+      if (count >= cap) break;
+      if (!timer.repeat || !timers.has(id)) continue;
+      runTimer(timer);
+      runOneShots();
     }
     return count;
   }
