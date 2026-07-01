@@ -484,3 +484,232 @@ def test_layout_shim_uses_simple_stylesheet_dimensions():
 
     assert page.eval("() => document.querySelector('.box').getBoundingClientRect().width") == 42
     assert page.eval("() => document.querySelector('.box').offsetHeight") == 9
+
+
+def test_failed_external_script_does_not_abort_page_load():
+    def handler(request):
+        return httpx.Response(404, text="missing")
+
+    import httpx
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    page = Page.from_html(
+        """
+        <div id="result">ok</div>
+        <script src="/vendor/tracker.js"></script>
+        """,
+        url="https://example.test",
+        client=client,
+    )
+
+    assert page.select("#result").text == "ok"
+    assert len(page.script_errors) == 1
+    assert "tracker.js" in page.script_errors[0]
+
+
+def test_failed_external_script_raises_when_requested():
+    def handler(request):
+        return httpx.Response(404, text="missing")
+
+    import httpx
+    import pytest
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(httpx.HTTPStatusError):
+        Page.from_html(
+            '<script src="/app.js"></script>',
+            url="https://example.test",
+            client=client,
+            raise_script_errors=True,
+        )
+
+
+def test_non_javascript_script_types_are_not_executed():
+    page = Page.from_html(
+        """
+        <script type="application/ld+json">{"@context": "https://schema.org"}</script>
+        <script type="text/template"><div>{{ name }}</div></script>
+        <div id="result">ok</div>
+        """
+    )
+
+    assert page.select("#result").text == "ok"
+    assert page.script_errors == []
+
+
+def test_clear_timeout_cancels_timer():
+    page = Page.from_html(
+        """
+        <div id="result">initial</div>
+        <script>
+          const id = setTimeout(() => {
+            document.querySelector("#result").textContent = "changed";
+          }, 10);
+          clearTimeout(id);
+        </script>
+        """
+    )
+
+    assert page.select("#result").text == "initial"
+
+
+def test_set_interval_repeats_until_cleared():
+    page = Page.from_html(
+        """
+        <div id="result">0</div>
+        <script>
+          let count = 0;
+          const id = setInterval(() => {
+            count += 1;
+            document.querySelector("#result").textContent = String(count);
+            if (count >= 3) clearInterval(id);
+          }, 10);
+        </script>
+        """
+    )
+
+    assert page.select("#result").text == "3"
+
+
+def test_timer_scheduled_in_dom_content_loaded_listener_runs():
+    page = Page.from_html(
+        """
+        <div id="result">initial</div>
+        <script>
+          document.addEventListener("DOMContentLoaded", () => {
+            setTimeout(() => {
+              document.querySelector("#result").textContent = "done";
+            }, 0);
+          });
+        </script>
+        """
+    )
+
+    assert page.select("#result").text == "done"
+
+
+def test_stray_closing_tag_does_not_collapse_tree():
+    page = Page.from_html("<div id='outer'><span>a</span></p><span>b</span></div>")
+
+    assert page.eval("() => document.querySelector('#outer').children.length") == 2
+    assert page.select("#outer span", 1).text == "b"
+
+
+def test_html_entities_are_decoded_and_serialized_once():
+    page = Page.from_html("<div id='e'>a &amp; b &lt;c&gt;</div>")
+
+    assert page.select("#e").text == "a & b <c>"
+    assert '<div id="e">a &amp; b &lt;c&gt;</div>' in page.html()
+
+
+def test_inner_html_decodes_entities_and_handles_void_elements():
+    page = Page.from_html(
+        """
+        <div id="x"></div>
+        <script>
+          document.querySelector("#x").innerHTML = 'a &amp; b<img src="pic.png"><span>after</span>';
+        </script>
+        """
+    )
+
+    assert page.select("#x").text == "a & bafter"
+    assert page.eval("() => document.querySelector('#x').children.length") == 2
+    assert page.eval("() => document.querySelector('#x img').childNodes.length") == 0
+
+
+def test_void_elements_serialize_without_closing_tag():
+    page = Page.from_html("<p>a<br>b</p><img src='x.png'>")
+
+    html = page.html()
+    assert "<br>" in html
+    assert "</br>" not in html
+    assert '<img src="x.png">' in html
+    assert "</img>" not in html
+
+
+def test_script_content_is_serialized_raw():
+    page = Page.from_html("<script>if (1 < 2 && true) {}</script><div>x</div>")
+
+    assert "if (1 < 2 && true) {}" in page.html()
+
+
+def test_selector_list_with_comma():
+    page = Page.from_html("<h1>one</h1><h2>two</h2><p>three</p>")
+
+    assert page.eval("() => document.querySelectorAll('h1, h2').length") == 2
+    assert page.eval("() => document.querySelector('p').matches('h1, p')") is True
+
+
+def test_descendant_selector_returns_unique_nodes_in_document_order():
+    page = Page.from_html("<div><div><span>x</span></div></div><span>y</span>")
+
+    assert page.eval("() => document.querySelectorAll('div span').length") == 1
+    texts = [item.text for item in page.select_all("span")]
+    assert texts == ["x", "y"]
+
+
+def test_fetch_network_error_rejects_promise():
+    def handler(request):
+        raise httpx.ConnectError("connection refused")
+
+    import httpx
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    page = Page.from_html(
+        """
+        <div id="result">initial</div>
+        <script>
+          fetch("/api")
+            .then(() => { document.querySelector("#result").textContent = "resolved"; })
+            .catch((error) => {
+              document.querySelector("#result").textContent = "caught:" + (error instanceof TypeError);
+            });
+        </script>
+        """,
+        url="https://example.test",
+        client=client,
+    )
+
+    assert page.select("#result").text == "caught:true"
+    assert page.script_errors == []
+
+
+def test_xhr_network_error_triggers_onerror():
+    def handler(request):
+        raise httpx.ConnectError("connection refused")
+
+    import httpx
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    page = Page.from_html(
+        """
+        <div id="result">initial</div>
+        <script>
+          const xhr = new XMLHttpRequest();
+          xhr.open("GET", "/api");
+          xhr.onerror = () => { document.querySelector("#result").textContent = "error"; };
+          xhr.onload = () => { document.querySelector("#result").textContent = "load"; };
+          xhr.send();
+        </script>
+        """,
+        url="https://example.test",
+        client=client,
+    )
+
+    assert page.select("#result").text == "error"
+
+
+def test_storage_and_js_cookies_survive_goto():
+    def handler(request):
+        return httpx.Response(200, html="<h1>page</h1>")
+
+    import httpx
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    page = Page.open("https://example.test/a", client=client)
+    page.eval("() => localStorage.setItem('k', 'v')")
+    page.eval("() => { document.cookie = 'js=1'; }")
+    page.goto("https://example.test/b")
+
+    assert page.eval("() => localStorage.getItem('k')") == "v"
+    assert page.eval("() => document.cookie") == "js=1"
